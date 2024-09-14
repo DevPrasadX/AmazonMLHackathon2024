@@ -1,12 +1,11 @@
-import pandas as pd
-import re
 import os
+import re
+import requests
 from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
-import requests
+import pandas as pd
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
-from src.constants import allowed_units  # Import allowed_units
 
 # Path to Tesseract executable
 pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
@@ -14,6 +13,18 @@ pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 # Directory to store downloaded images
 download_dir = "downloaded_images"
 os.makedirs(download_dir, exist_ok=True)
+
+# Mapping of entity names to their corresponding units
+entity_unit_map = {
+    'width': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
+    'depth': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
+    'height': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
+    'item_weight': {'gram', 'g', 'kilogram', 'kg', 'microgram', 'µg', 'milligram', 'mg', 'ounce', 'oz', 'pound', 'lb', 'ton'},
+    'maximum_weight_recommendation': {'gram', 'g', 'kilogram', 'kg', 'microgram', 'µg', 'milligram', 'mg', 'ounce', 'oz', 'pound', 'lb', 'ton'},
+    'voltage': {'kilovolt', 'kV', 'millivolt', 'mV', 'volt', 'V'},
+    'wattage': {'kilowatt', 'kW', 'watt', 'W'},
+    'item_volume': {'centilitre', 'cl', 'cubic foot', 'cu ft', 'cubic inch', 'cu in', 'cup', 'decilitre', 'dl', 'fluid ounce', 'fl oz', 'gallon', 'gal', 'imperial gallon', 'imp gal', 'litre', 'l', 'microlitre', 'µl', 'millilitre', 'ml', 'pint', 'pt', 'quart', 'qt'}
+}
 
 # Full name mapping for units
 unit_full_name_map = {
@@ -42,15 +53,15 @@ unit_full_name_map = {
     'lb': 'pound',
     'pound': 'pound',
     'ton': 'ton',
-    'kV': 'kilovolt',
+    'kv': 'kilovolt',
     'kilovolt': 'kilovolt',
-    'mV': 'millivolt',
+    'mv': 'millivolt',
     'millivolt': 'millivolt',
-    'V': 'volt',
+    'v': 'volt',
     'volt': 'volt',
-    'kW': 'kilowatt',
+    'kw': 'kilowatt',
     'kilowatt': 'kilowatt',
-    'W': 'watt',
+    'w': 'watt',
     'watt': 'watt',
     'cl': 'centilitre',
     'centilitre': 'centilitre',
@@ -78,6 +89,7 @@ unit_full_name_map = {
     'qt': 'quart',
     'quart': 'quart'
 }
+
 
 # Preprocess image only when needed (based on image quality)
 def preprocess_image(image, enhance=False):
@@ -115,14 +127,18 @@ def extract_text_from_image(image_path, enhance=False):
         print(f"An error occurred while extracting text from {image_path}: {e}")
         return None
 
-# Function to generate a regex pattern based on allowed units
-def get_unit_pattern():
-    unit_regex = r'\b(\d+(\.\d+)?)\s*({})\b'.format('|'.join(allowed_units))
+# Function to generate a regex pattern based on the entity's units
+def get_unit_pattern(units):
+    unit_regex = r'\b(\d+(\.\d+)?)\s*({})\b'.format('|'.join(units))
     return re.compile(unit_regex, re.IGNORECASE)
 
 # Function to extract the highest value unit from text based on entity's units
-def extract_highest_unit(text):
-    unit_pattern = get_unit_pattern()
+def extract_highest_unit(entity_name, text):
+    if entity_name not in entity_unit_map:
+        return None
+
+    units = entity_unit_map[entity_name]
+    unit_pattern = get_unit_pattern(units)
     
     matches = unit_pattern.findall(text)
     if not matches:
@@ -130,26 +146,32 @@ def extract_highest_unit(text):
     
     # Find the highest value
     max_value = max(float(match[0]) for match in matches)
-    max_unit = unit_full_name_map.get(matches[0][2].lower(), matches[0][2].lower())
+    
+    # Convert unit abbreviation to lowercase and map to full name
+    max_unit_abbreviation = matches[0][2].lower()
+    max_unit = unit_full_name_map.get(max_unit_abbreviation, max_unit_abbreviation)
     
     return f"{max_value} {max_unit}"
+
 
 # The predictor function integrated with image processing and text extraction
 def predictor(image_link, category_id, entity_name):
     # Download the image
     image_path = download_image(image_link, category_id)
     if not image_path:
-        return {"index": category_id, "entity_name": entity_name, "image_link": image_link, "units_extracted": None}
+        # return {"index": category_id, "entity_name": entity_name, "image_link": image_link, "units_extracted": None}
+        return {"index": category_id, "prediction": None}
+
     
     # Extract text from the image
     text = extract_text_from_image(image_path, enhance=False)
     if text is None or text.strip() == '':
         text = extract_text_from_image(image_path, enhance=True)
     
-    # Extract the highest value unit from the text
-    highest_unit = extract_highest_unit(text)
+    # Extract the highest value unit from the text using entity name
+    highest_unit = extract_highest_unit(entity_name, text)
     
-    return {"index": category_id, "entity_name": entity_name, "image_link": image_link, "units_extracted": highest_unit}
+    return {"index": category_id, "prediction": highest_unit}
 
 if __name__ == "__main__":
     # Load the dataset from sample_test.csv
