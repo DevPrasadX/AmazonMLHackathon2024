@@ -6,6 +6,10 @@ import pytesseract
 import pandas as pd
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
+from src.constants import entity_unit_map
+from src.constants import allowed_units
+
+# print(allowed_units)
 
 # Path to Tesseract executable
 pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
@@ -14,82 +18,40 @@ pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 download_dir = "downloaded_images"
 os.makedirs(download_dir, exist_ok=True)
 
-# Mapping of entity names to their corresponding units
-entity_unit_map = {
-    'width': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
-    'depth': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
-    'height': {'centimetre', 'cm', 'foot', 'ft', 'inch', 'in', 'metre', 'm', 'millimetre', 'mm', 'yard', 'yd'},
-    'item_weight': {'gram', 'g', 'kilogram', 'kg', 'microgram', 'µg', 'milligram', 'mg', 'ounce', 'oz', 'pound', 'lb', 'ton'},
-    'maximum_weight_recommendation': {'gram', 'g', 'kilogram', 'kg', 'microgram', 'µg', 'milligram', 'mg', 'ounce', 'oz', 'pound', 'lb', 'ton'},
-    'voltage': {'kilovolt', 'kV', 'millivolt', 'mV', 'volt', 'V'},
-    'wattage': {'kilowatt', 'kW', 'watt', 'W'},
-    'item_volume': {'centilitre', 'cl', 'cubic foot', 'cu ft', 'cubic inch', 'cu in', 'cup', 'decilitre', 'dl', 'fluid ounce', 'fl oz', 'gallon', 'gal', 'imperial gallon', 'imp gal', 'litre', 'l', 'microlitre', 'µl', 'millilitre', 'ml', 'pint', 'pt', 'quart', 'qt'}
-}
-
-# Full name mapping for units
+# Unit mapping for short forms
 unit_full_name_map = {
     'cm': 'centimetre',
-    'centimetre': 'centimetre',
     'ft': 'foot',
-    'foot': 'foot',
     'in': 'inch',
-    'inch': 'inch',
     'm': 'metre',
-    'metre': 'metre',
     'mm': 'millimetre',
-    'millimetre': 'millimetre',
     'yd': 'yard',
-    'yard': 'yard',
     'g': 'gram',
-    'gram': 'gram',
     'kg': 'kilogram',
-    'kilogram': 'kilogram',
     'µg': 'microgram',
-    'microgram': 'microgram',
     'mg': 'milligram',
-    'milligram': 'milligram',
     'oz': 'ounce',
-    'ounce': 'ounce',
     'lb': 'pound',
-    'pound': 'pound',
     'ton': 'ton',
     'kv': 'kilovolt',
-    'kilovolt': 'kilovolt',
     'mv': 'millivolt',
-    'millivolt': 'millivolt',
     'v': 'volt',
-    'volt': 'volt',
     'kw': 'kilowatt',
-    'kilowatt': 'kilowatt',
     'w': 'watt',
-    'watt': 'watt',
     'cl': 'centilitre',
-    'centilitre': 'centilitre',
     'cu ft': 'cubic foot',
-    'cubic foot': 'cubic foot',
     'cu in': 'cubic inch',
-    'cubic inch': 'cubic inch',
     'cup': 'cup',
-    'decilitre': 'decilitre',
     'dl': 'decilitre',
     'fl oz': 'fluid ounce',
-    'fluid ounce': 'fluid ounce',
     'gal': 'gallon',
-    'gallon': 'gallon',
     'imp gal': 'imperial gallon',
-    'imperial gallon': 'imperial gallon',
     'l': 'litre',
-    'litre': 'litre',
     'µl': 'microlitre',
-    'microlitre': 'microlitre',
     'ml': 'millilitre',
-    'millilitre': 'millilitre',
     'pt': 'pint',
-    'pint': 'pint',
-    'qt': 'quart',
-    'quart': 'quart'
+    'qt': 'quart'
 }
-
 
 # Preprocess image only when needed (based on image quality)
 def preprocess_image(image, enhance=False):
@@ -137,21 +99,49 @@ def extract_highest_unit(entity_name, text):
     if entity_name not in entity_unit_map:
         return None
 
-    units = entity_unit_map[entity_name]
-    unit_pattern = get_unit_pattern(units)
+    # Get the set of valid units for the entity
+    valid_units = entity_unit_map[entity_name]
     
+    # Generate regex pattern for short form units
+    unit_pattern = get_unit_pattern(unit_full_name_map.keys())
+    
+    # Find all matches of value + unit
     matches = unit_pattern.findall(text)
     if not matches:
         return None
     
+    # Process each match: convert short unit to full form and check validity
+    valid_matches = []
+    for match in matches:
+        value = float(match[0])
+        short_unit = match[2].lower()
+        
+        # Convert short form to full form
+        full_unit = unit_full_name_map.get(short_unit, short_unit)
+        
+        # Only keep valid units for the entity
+        if full_unit in valid_units:
+            valid_matches.append((value, full_unit))
+    
+    if not valid_matches:
+        return None
+
     # Find the highest value
-    max_value = max(float(match[0]) for match in matches)
-    
-    # Convert unit abbreviation to lowercase and map to full name
-    max_unit_abbreviation = matches[0][2].lower()
-    max_unit = unit_full_name_map.get(max_unit_abbreviation, max_unit_abbreviation)
-    
-    return f"{max_value} {max_unit}"
+    max_value, max_unit = max(valid_matches, key=lambda x: x[0])
+
+    # Filter the results based on allowed units
+    if max_unit not in allowed_units:
+        return None  # Skip if the max unit is not allowed
+
+    # Format max_value: add decimal if float, leave as is if integer
+    if max_value.is_integer():
+        formatted_value = f"{int(max_value)}"  # No decimal for integers
+    else:
+        formatted_value = f"{max_value:.2f}"  # Two decimal places for floats
+
+    return f"{formatted_value} {max_unit}"
+
+
 
 
 # The predictor function integrated with image processing and text extraction
@@ -176,7 +166,7 @@ def predictor(image_link, category_id, entity_name):
 if __name__ == "__main__":
     # Load the dataset from sample_test.csv
     csv_file_path = "sample_test.csv"
-    df = pd.read_csv(csv_file_path)
+    df = pd.read_csv(csv_file_path, low_memory=False)
 
     # Extract text and relevant units for each image using parallel processing
     results = []
