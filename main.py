@@ -6,8 +6,7 @@ import pytesseract
 import pandas as pd
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
-from src.constants import entity_unit_map
-from src.constants import allowed_units
+from src.constants import allowed_units , unit_full_name_map , entity_unit_map
 
 # print(allowed_units)
 
@@ -17,41 +16,6 @@ pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 # Directory to store downloaded images
 download_dir = "downloaded_images"
 os.makedirs(download_dir, exist_ok=True)
-
-# Unit mapping for short forms
-unit_full_name_map = {
-    'cm': 'centimetre',
-    'ft': 'foot',
-    'in': 'inch',
-    'm': 'metre',
-    'mm': 'millimetre',
-    'yd': 'yard',
-    'g': 'gram',
-    'kg': 'kilogram',
-    'µg': 'microgram',
-    'mg': 'milligram',
-    'oz': 'ounce',
-    'lb': 'pound',
-    'ton': 'ton',
-    'kv': 'kilovolt',
-    'mv': 'millivolt',
-    'v': 'volt',
-    'kw': 'kilowatt',
-    'w': 'watt',
-    'cl': 'centilitre',
-    'cu ft': 'cubic foot',
-    'cu in': 'cubic inch',
-    'cup': 'cup',
-    'dl': 'decilitre',
-    'fl oz': 'fluid ounce',
-    'gal': 'gallon',
-    'imp gal': 'imperial gallon',
-    'l': 'litre',
-    'µl': 'microlitre',
-    'ml': 'millilitre',
-    'pt': 'pint',
-    'qt': 'quart'
-}
 
 # Preprocess image only when needed (based on image quality)
 def preprocess_image(image, enhance=False):
